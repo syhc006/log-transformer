@@ -1,0 +1,4 @@
+model: local
+redis:
+  ip: 192.40.10.11
+  port: 6379
