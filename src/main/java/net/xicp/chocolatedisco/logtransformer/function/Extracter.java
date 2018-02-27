@@ -16,6 +16,9 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,38 +49,47 @@ public class Extracter extends BaseFunction {
 
     @Override
     public void execute(TridentTuple tuple, TridentCollector collector) {
-        tuple.stream().findFirst().ifPresent(jsonStr -> {
-            try {
-                JSONObject json = JSONObject.parseObject((String) jsonStr);
-                Jedis jedis = jedisPool.getResource();
-                List<String> templates = JSONArray.parseArray(
-                        jedis.hget(
-                                Optional.ofNullable(json.getString("type")).orElseThrow(() -> new Exception("can not find [type]")),
-                                "templates"),
-                        String.class);
-                templates.stream().anyMatch(template -> {
-                    Grok grok = new Grok();
-                    try {
-                        grok.copyPatterns(grokPatterns);
-                        grok.compile(template);
-                        Match gm = grok.match(json.getString("message"));
-                        gm.captures();
-                        if (gm.toMap().size() != 0) {
-                            JSONObject extracted = new JSONObject(gm.toMap());
-                            extracted.put("type", json.getString("type"));
-                            collector.emit(new Values(extracted));
-                            return true;
-                        } else {
-                            return false;
-                        }
-                    } catch (GrokException e) {
-                        log.error(e.getMessage());
+        Jedis jedis = jedisPool.getResource();
+        try {
+            JSONObject json = JSONObject.parseObject((String) tuple.get(0));
+            List<String> templates = JSONArray.parseArray(
+                    jedis.hget(
+                            Optional.ofNullable(json.getString("type")).orElseThrow(() -> new Exception("can not find [type]")),
+                            "templates"),
+                    String.class);
+            templates.stream().anyMatch(template -> {
+                Grok grok = new Grok();
+                try {
+                    grok.copyPatterns(grokPatterns);
+                    grok.compile(template);
+                    Match gm = grok.match(json.getString("message"));
+                    gm.captures();
+                    if (gm.toMap().size() != 0) {
+                        JSONObject extracted = new JSONObject(gm.toMap());
+                        extracted.put("type", json.getString("type"));
+                        Optional.ofNullable((String) json.get("@timestamp"))
+                                .ifPresent(time -> {
+                                    Instant instant = Instant.parse(time);
+                                    ZoneId china = ZoneId.of("+08:00");
+                                    ZonedDateTime dateAndTimeInChina = ZonedDateTime.ofInstant(instant, china);
+                                    extracted.put("generateTime", dateAndTimeInChina.toInstant().getEpochSecond() * 1000);
+                                });
+                        collector.emit(new Values(extracted));
+                        return true;
+                    } else {
                         return false;
                     }
-                });
-            } catch (Exception e) {
-                log.error(e.getMessage());
+                } catch (GrokException e) {
+                    log.error(e.getMessage(), e);
+                    return false;
+                }
+            });
+        } catch (Exception e) {
+            log.error(e.getMessage(), e);
+        } finally {
+            if (jedis != null) {
+                jedis.close();
             }
-        });
+        }
     }
 }

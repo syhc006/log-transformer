@@ -41,27 +41,35 @@ public class Translator extends BaseFunction {
 
     @Override
     public void execute(TridentTuple tuple, TridentCollector collector) {
-        tuple.stream().findFirst().ifPresent(extracted -> {
-            try {
-                Jedis jedis = jedisPool.getResource();
-                List<JSONObject> values = JSONArray.parseArray(
-                        jedis.hget(
-                                Optional.ofNullable(((JSONObject) extracted).getString("type")).orElseThrow(() -> new Exception("can not find [type]")),
-                                "values"),
-                        JSONObject.class);
-                values.stream().forEach(value -> {
-                    String field = value.getString("field");
-                    String raw = value.getString("raw");
-                    String store = value.getString("store");
-                    String real = ((JSONObject) extracted).getString(field);
-                    if (real != null && real.equals(raw)) {
-                        ((JSONObject) extracted).put(field, store);
-                    }
+        Jedis jedis = jedisPool.getResource();
+        try {
+            tuple.stream().findFirst().ifPresent(extracted -> {
+                try {
+                    List<JSONObject> values = JSONArray.parseArray(
+                            jedis.hget(
+                                    Optional.ofNullable(((JSONObject) extracted).getString("type")).orElseThrow(() -> new Exception("can not find [type]")),
+                                    "values"),
+                            JSONObject.class);
+                    values.stream().forEach(value -> {
+                        String field = value.getString("field");
+                        String raw = value.getString("raw");
+                        String store = value.getString("store");
+                        String real = ((JSONObject) extracted).getString(field);
+                        if (real != null && real.equals(raw)) {
+                            ((JSONObject) extracted).put(field, store);
+                        }
+                    });
                     collector.emit(new Values(extracted));
-                });
-            } catch (Exception e) {
-                log.error(e.getMessage());
+                } catch (Exception e) {
+                    log.error(e.getMessage(), e);
+                }
+            });
+        } catch (Exception e) {
+            log.error(e.getMessage(), e);
+        } finally {
+            if (jedis != null) {
+                jedis.close();
             }
-        });
+        }
     }
 }
