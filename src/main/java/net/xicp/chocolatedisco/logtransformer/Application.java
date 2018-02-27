@@ -7,6 +7,8 @@ import kafka.api.OffsetRequest;
 import net.xicp.chocolatedisco.logtransformer.function.Extracter;
 import net.xicp.chocolatedisco.logtransformer.function.Printer;
 import net.xicp.chocolatedisco.logtransformer.function.Translator;
+import net.xicp.chocolatedisco.logtransformer.state.elastic.ElasticState;
+import net.xicp.chocolatedisco.logtransformer.state.elastic.ElasticStateUpdater;
 import org.apache.storm.Config;
 import org.apache.storm.LocalCluster;
 import org.apache.storm.StormSubmitter;
@@ -46,12 +48,13 @@ public class Application implements Serializable {
         topology.newStream("log-transformer", kafkaSpout)
                 .each(new Fields(StringScheme.STRING_SCHEME_KEY), new Extracter(), new Fields("extracted"))
                 .each(new Fields("extracted"), new Translator(), new Fields("translated"))
-                .each(new Fields("translated"), new Printer(), new Fields(""));
+                .each(new Fields("translated"), new Printer(), new Fields("printed"))
+                .partitionPersist(new ElasticState.ElasticStateFactory(config), new Fields("printed"), new ElasticStateUpdater());
         //提交拓扑
         if (applicationConfigure.getModel().equals("local")) {
             //本地模式
             LocalCluster cluster = new LocalCluster();
-            cluster.submitTopology("123", config, topology.build());
+            cluster.submitTopology("log-transformer-topology", config, topology.build());
         } else {
             //集群模式
             StormSubmitter.submitTopologyWithProgressBar("log-transformer-topology", config, topology.build());
@@ -75,7 +78,8 @@ public class Application implements Serializable {
         TridentKafkaConfig spoutConfig = new TridentKafkaConfig(brokerHosts, jedis.hget("zookeeper", "topic"));
         spoutConfig.scheme = new SchemeAsMultiScheme(new StringScheme());
         spoutConfig.ignoreZkOffsets = false;
-        spoutConfig.startOffsetTime = OffsetRequest.LatestTime();
+//        spoutConfig.startOffsetTime = OffsetRequest.LatestTime();
+        spoutConfig.startOffsetTime = OffsetRequest.EarliestTime();
         return new OpaqueTridentKafkaSpout(spoutConfig);
     }
 }
